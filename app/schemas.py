@@ -56,3 +56,13 @@ class MessageOut(BaseModel):
     direction: str
     body: str
     sent_at: datetime
+
+class PortalEvent(BaseModel):
+    event_id: str = Field(min_length=1, max_length=100)
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    treatment: str | None = None
+    city: str | None = None
+    message: str = Field(min_length=1)
+    created_at: datetime | None = None

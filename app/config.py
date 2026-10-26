@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # LLM (defaults keep tests and CI working without a key)
     gemini_api_key: str = ""
-    llm_model: str = "gemini-3.5-flash-lite"
+    llm_model: str = "gemini-3.1-flash-lite"
     embed_model: str = "gemini-embedding-001"
     embed_dim: int = 768
     price_in_per_m: float = 0.0

@@ -20,6 +20,8 @@ TestingSession = sessionmaker(bind=engine, autoflush=False)
 
 @pytest.fixture(scope="session", autouse=True)
 def create_tables():
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
@@ -30,7 +32,7 @@ def clean_db():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE webhook_events, messages, threads, leads, users, orgs "
+                "TRUNCATE memories, webhook_events, messages, threads, leads, users, orgs "
                 "RESTART IDENTITY CASCADE"
             )
         )

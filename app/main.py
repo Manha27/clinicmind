@@ -3,10 +3,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.routers import leads, messages, webhooks
+from app.routers import leads, memories, messages, webhooks
 
 app = FastAPI(title="ClinicMind")
 app.include_router(leads.router)
+app.include_router(memories.router)
 app.include_router(messages.router)
 app.include_router(webhooks.router)
 

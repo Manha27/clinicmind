@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Numeric, Text, UniqueConstraint, text
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import ForeignKey, Index, Numeric, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.config import settings
 from app.db import Base
 
 UUID_PK = dict(primary_key=True, server_default=text("gen_random_uuid()"))
@@ -104,4 +106,34 @@ class LLMCall(Base):
     ok: Mapped[bool] = mapped_column(server_default=text("true"))
     error: Mapped[str | None] = mapped_column(Text)
     context_manifest: Mapped[dict | None]  # which memories/messages went in
+    created_at: Mapped[datetime] = mapped_column(**NOW)
+
+class Memory(Base):
+    __tablename__ = "memories"
+    __table_args__ = (
+        Index("ix_memories_scope", "scope", "scope_id", "status"),
+        Index(
+            "ix_memories_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id"))
+    scope: Mapped[str]  # lead | deal | rep
+    scope_id: Mapped[uuid.UUID]  # the lead / deal / user this memory belongs to
+    kind: Mapped[str]  # fact | preference | episode | commitment | summary
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(settings.embed_dim))
+    importance: Mapped[float] = mapped_column(server_default="0.5")
+    confidence: Mapped[float] = mapped_column(server_default="0.8")
+    status: Mapped[str] = mapped_column(server_default="active")
+    valid_from: Mapped[datetime] = mapped_column(**NOW)
+    valid_to: Mapped[datetime | None]
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("memories.id"))
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(**NOW)

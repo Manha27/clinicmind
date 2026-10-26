@@ -66,3 +66,14 @@ class PortalEvent(BaseModel):
     city: str | None = None
     message: str = Field(min_length=1)
     created_at: datetime | None = None
+
+class MemoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    content: str
+    importance: float
+    confidence: float
+    status: str
+    created_at: datetime

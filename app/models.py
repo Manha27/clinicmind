@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint, text
+from sqlalchemy import ForeignKey, Numeric, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -88,3 +88,20 @@ class WebhookEvent(Base):
     attempts: Mapped[int] = mapped_column(server_default="0")
     last_error: Mapped[str | None]
     received_at: Mapped[datetime] = mapped_column(**NOW)
+
+class LLMCall(Base):
+    """One row per LLM or embedding call. Evals read this table."""
+
+    __tablename__ = "llm_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    purpose: Mapped[str]  # extract, reconcile, answer, summarise, judge, embed
+    model: Mapped[str]
+    prompt_tokens: Mapped[int | None]
+    completion_tokens: Mapped[int | None]
+    latency_ms: Mapped[int]
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    ok: Mapped[bool] = mapped_column(server_default=text("true"))
+    error: Mapped[str | None] = mapped_column(Text)
+    context_manifest: Mapped[dict | None]  # which memories/messages went in
+    created_at: Mapped[datetime] = mapped_column(**NOW)

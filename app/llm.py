@@ -1,6 +1,11 @@
 import math
 import time
+import math
+import random
+import time
 
+from google import genai
+from google.genai import errors, types
 from google import genai
 from google.genai import types
 
@@ -19,6 +24,30 @@ def get_client() -> genai.Client:
         _client = genai.Client(api_key=settings.gemini_api_key)
     return _client
 
+class LLMUnavailable(Exception):
+    """The AI provider is overloaded or rate-limited, even after retries."""
+
+
+RETRY_DELAYS = [2, 6, 15]  # seconds to wait before each retry
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, errors.ServerError):  # 500, 503...
+        return True
+    return isinstance(exc, errors.ClientError) and getattr(exc, "code", None) == 429
+
+
+def call_with_retry(fn):
+    """Run fn(); on 5xx/429 wait (with a little random jitter) and try again."""
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if not _is_retryable(exc):
+                raise
+            if attempt == len(RETRY_DELAYS):
+                raise LLMUnavailable(str(exc)[:300]) from exc
+            time.sleep(RETRY_DELAYS[attempt] + random.random())
 
 def estimate_cost(prompt_tokens: int | None, completion_tokens: int | None) -> float:
     return (
@@ -73,8 +102,10 @@ def generate(
     )
     start = time.perf_counter()
     try:
-        response = get_client().models.generate_content(
-            model=settings.llm_model, contents=prompt, config=config
+         response = call_with_retry(
+            lambda: get_client().models.generate_content(
+                model=settings.llm_model, contents=prompt, config=config
+            )
         )
     except Exception as exc:
         log_call(
@@ -108,12 +139,14 @@ def embed(texts: list[str], *, task: str = "RETRIEVAL_DOCUMENT") -> list[list[fl
     """Return one normalised vector per text. Use task='RETRIEVAL_QUERY' for search queries."""
     start = time.perf_counter()
     try:
-        response = get_client().models.embed_content(
-            model=settings.embed_model,
-            contents=texts,
-            config=types.EmbedContentConfig(
-                task_type=task, output_dimensionality=settings.embed_dim
-            ),
+        response = call_with_retry(
+            lambda: get_client().models.embed_content(
+                model=settings.embed_model,
+                contents=texts,
+                config=types.EmbedContentConfig(
+                    task_type=task, output_dimensionality=settings.embed_dim
+                ),
+            )
         )
     except Exception as exc:
         log_call(

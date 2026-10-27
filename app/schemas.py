@@ -77,3 +77,7 @@ class MemoryOut(BaseModel):
     confidence: float
     status: str
     created_at: datetime
+
+class MemoryHit(BaseModel):
+    memory: MemoryOut
+    similarity: float

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-3.1-flash-lite"
     embed_model: str = "gemini-embedding-001"
     embed_dim: int = 768
+    llm_timeout_s: int = 30
     price_in_per_m: float = 0.0
     price_out_per_m: float = 0.0
 

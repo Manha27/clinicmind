@@ -3,11 +3,18 @@ import time
 import math
 import random
 import time
+import math
+import random
+import time
 
+import httpx
+from google import genai
+from google.genai import errors, types
 from google import genai
 from google.genai import errors, types
 from google import genai
 from google.genai import types
+from sqlalchemy import exc
 
 from app.config import settings
 from app.db import SessionLocal
@@ -21,17 +28,22 @@ def get_client() -> genai.Client:
     if _client is None:
         if not settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is not set in .env")
-        _client = genai.Client(api_key=settings.gemini_api_key)
+        _client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.llm_timeout_s * 1000),  # milliseconds
+        )    
     return _client
 
 class LLMUnavailable(Exception):
     """The AI provider is overloaded or rate-limited, even after retries."""
 
 
-RETRY_DELAYS = [2, 6, 15]  # seconds to wait before each retry
+RETRY_DELAYS = [2, 6]  # seconds to wait before each retry
 
 
 def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
     if isinstance(exc, errors.ServerError):  # 500, 503...
         return True
     return isinstance(exc, errors.ClientError) and getattr(exc, "code", None) == 429

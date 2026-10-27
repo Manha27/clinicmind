@@ -32,9 +32,8 @@ def clean_db():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE memories, webhook_events, messages, threads, leads, users, orgs "
-                "RESTART IDENTITY CASCADE"
-            )
+                "TRUNCATE memory_events, memories, webhook_events, messages, threads, leads, users, orgs "
+                "RESTART IDENTITY CASCADE"          )
         )
     with TestingSession() as session:
         session.add(Org(name="Test Clinic"))

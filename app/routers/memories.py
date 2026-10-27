@@ -8,6 +8,7 @@ from app.models import Lead, Memory
 from app.memory.retrieve import search_memories
 from app.memory.service import extract_pending
 from app.schemas import MemoryHit, MemoryOut
+from typing import Literal
 
 router = APIRouter(prefix="/leads/{lead_id}", tags=["memories"])
 
@@ -23,16 +24,14 @@ def extract(lead: Lead = Depends(get_lead_or_404), db: Session = Depends(get_db)
 
 @router.get("/memories", response_model=list[MemoryOut])
 def list_memories(
-    lead: Lead = Depends(get_lead_or_404), db: Session = Depends(get_db)
+    status: Literal["active", "superseded", "all"] = "active",
+    lead: Lead = Depends(get_lead_or_404),
+    db: Session = Depends(get_db),
 ):
-    stmt = (
-        select(Memory)
-        .where(
-            Memory.scope == "lead", Memory.scope_id == lead.id, Memory.status == "active"
-        )
-        .order_by(Memory.created_at)
-    )
-    return db.scalars(stmt).all()
+    stmt = select(Memory).where(Memory.scope == "lead", Memory.scope_id == lead.id)
+    if status != "all":
+        stmt = stmt.where(Memory.status == status)
+    return db.scalars(stmt.order_by(Memory.created_at)).all()
 
 @router.get("/memories/search", response_model=list[MemoryHit])
 def search(

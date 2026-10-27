@@ -137,3 +137,16 @@ class Memory(Base):
         ForeignKey("messages.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(**NOW)
+
+class MemoryEvent(Base):
+    """Audit trail: every memory write decision, with the reason."""
+
+    __tablename__ = "memory_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    memory_id: Mapped[uuid.UUID | None]
+    op: Mapped[str]  # ADD, SUPERSEDE, NOOP
+    reason: Mapped[str | None] = mapped_column(Text)
+    before: Mapped[dict | None]
+    after: Mapped[dict | None]
+    created_at: Mapped[datetime] = mapped_column(**NOW)

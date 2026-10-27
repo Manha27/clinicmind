@@ -1,4 +1,5 @@
 from app.config import settings
+import zlib
 
 FAKE_JSON = (
     '{"memories": ['
@@ -10,8 +11,13 @@ FAKE_JSON = (
 
 
 def fake_embed(texts, **kwargs):
-    return [[0.1] * settings.embed_dim for _ in texts]
-
+    # different text -> different axis, so memories are never treated as duplicates
+    out = []
+    for t in texts:
+        v = [0.0] * settings.embed_dim
+        v[zlib.crc32(t.encode()) % settings.embed_dim] = 1.0
+        out.append(v)
+    return out
 
 def setup_lead(client):
     lead_id = client.post("/leads", json={"email": "priya@example.com"}).json()["id"]
@@ -64,18 +70,18 @@ def test_llm_outage_returns_503_and_keeps_messages(client, monkeypatch):
     monkeypatch.setattr("app.memory.service.embed", fake_embed)
     assert len(client.post(f"/leads/{lead_id}/extract").json()) == 2
 
-    def test_one_invalid_memory_does_not_discard_the_rest(client, monkeypatch):
-        mixed = (
+def test_one_invalid_memory_does_not_discard_the_rest(client, monkeypatch):
+    mixed = (
             '{"memories": ['
             '{"kind": "fact", "content": "Budget is about 60,000 rupees", '
             '"importance": 0.9, "confidence": 0.9},'
             '{"kind": "treatment interest", "content": "Wants dental implants", '
             '"importance": 0.9, "confidence": 0.9}]}'
         )
-        monkeypatch.setattr("app.memory.extract.generate", lambda *a, **k: mixed)
-        monkeypatch.setattr("app.memory.service.embed", fake_embed)
-        lead_id = setup_lead(client)
+    monkeypatch.setattr("app.memory.extract.generate", lambda *a, **k: mixed)
+    monkeypatch.setattr("app.memory.service.embed", fake_embed)
+    lead_id = setup_lead(client)
 
-        r = client.post(f"/leads/{lead_id}/extract")
-        assert r.status_code == 200
-        assert [m["content"] for m in r.json()] == ["Budget is about 60,000 rupees"]
+    r = client.post(f"/leads/{lead_id}/extract")
+    assert r.status_code == 200
+    assert [m["content"] for m in r.json()] == ["Budget is about 60,000 rupees"]

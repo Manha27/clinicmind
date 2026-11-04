@@ -57,6 +57,7 @@ class MessageOut(BaseModel):
     body: str
     sent_at: datetime
 
+
 class PortalEvent(BaseModel):
     event_id: str = Field(min_length=1, max_length=100)
     name: str | None = None
@@ -66,6 +67,7 @@ class PortalEvent(BaseModel):
     city: str | None = None
     message: str = Field(min_length=1)
     created_at: datetime | None = None
+
 
 class MemoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -78,6 +80,28 @@ class MemoryOut(BaseModel):
     status: str
     created_at: datetime
 
+
 class MemoryHit(BaseModel):
     memory: MemoryOut
     similarity: float
+
+
+class HybridHit(BaseModel):
+    memory: MemoryOut
+    score: float
+    parts: dict[str, float]
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+class ContextOut(BaseModel):
+    text: str
+    manifest: dict
+
+
+class AskResponse(BaseModel):
+    answer: str
+    context: str
+    manifest: dict

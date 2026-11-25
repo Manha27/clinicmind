@@ -1,6 +1,7 @@
 import math
 import random
 import time
+from dataclasses import dataclass
 
 import httpx
 from google import genai
@@ -89,20 +90,24 @@ def log_call(
         db.commit()
 
 
-def generate(
-    prompt: str,
-    *,
-    purpose: str,
-    system: str | None = None,
-    json_mode: bool = False,
-    temperature: float = 0.2,
-    manifest: dict | None = None,
-) -> str:
-    config = types.GenerateContentConfig(
-        system_instruction=system,
-        temperature=temperature,
-        response_mime_type="application/json" if json_mode else None,
-    )
+@dataclass
+class ModelResult:
+    """What came back from the model, plus what it cost."""
+
+    response: object  # the raw SDK response (the agent needs its function calls)
+    model: str
+    latency_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+
+    @property
+    def text(self) -> str:
+        return self.response.text or ""
+
+
+def call_model(contents, config, *, purpose: str, manifest: dict | None = None) -> ModelResult:
+    """Call the main model (with retries). If it stays unavailable, try the fallback model.
+    Every attempt is logged in llm_calls."""
     models = [settings.llm_model]
     if settings.llm_fallback_model and settings.llm_fallback_model != settings.llm_model:
         models.append(settings.llm_fallback_model)
@@ -114,7 +119,7 @@ def generate(
         try:
             response = call_with_retry(
                 lambda: get_client().models.generate_content(
-                    model=model, contents=prompt, config=config
+                    model=model, contents=contents, config=config
                 ),
                 RETRY_DELAYS if is_last else FAST_FAIL_DELAYS,
             )
@@ -146,17 +151,50 @@ def generate(
         completion_tokens = (getattr(usage, "candidates_token_count", None) or 0) + (
             getattr(usage, "thoughts_token_count", None) or 0
         )
+        latency_ms = int((time.perf_counter() - start) * 1000)
         log_call(
             purpose=purpose,
             model=model,
-            latency_ms=int((time.perf_counter() - start) * 1000),
+            latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             manifest=manifest,
         )
-        return response.text or ""
+        return ModelResult(response, model, latency_ms, prompt_tokens, completion_tokens)
 
     raise last_error  # every model was unavailable
+
+
+def generate_full(
+    prompt: str,
+    *,
+    purpose: str,
+    system: str | None = None,
+    json_mode: bool = False,
+    temperature: float = 0.2,
+    manifest: dict | None = None,
+) -> ModelResult:
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=temperature,
+        response_mime_type="application/json" if json_mode else None,
+    )
+    return call_model(prompt, config, purpose=purpose, manifest=manifest)
+
+
+def generate(
+    prompt: str,
+    *,
+    purpose: str,
+    system: str | None = None,
+    json_mode: bool = False,
+    temperature: float = 0.2,
+    manifest: dict | None = None,
+) -> str:
+    return generate_full(
+        prompt, purpose=purpose, system=system, json_mode=json_mode,
+        temperature=temperature, manifest=manifest,
+    ).text
 
 
 def embed(texts: list[str], *, task: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:

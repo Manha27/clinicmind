@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.deps import get_org
+from app.jobs.handlers import notify
+from app.jobs.queue import enqueue_extraction
 from app.models import Lead, Message, Org, Thread, WebhookEvent
 from app.schemas import PortalEvent
 
@@ -22,8 +24,6 @@ MAX_AGE_SECONDS = 300  # reject requests older than 5 minutes (replay protection
 
 
 async def raw_body(request: Request) -> bytes:
-    # The signature covers the exact bytes that were sent, so we read
-    # the raw body before anything parses it as JSON.
     return await request.body()
 
 
@@ -33,19 +33,18 @@ def signature_is_valid(body: bytes, timestamp: str, signature: str) -> bool:
         settings.webhook_secret.encode(), signed, hashlib.sha256
     ).hexdigest()
     received = signature.removeprefix("sha256=")
-    # compare_digest takes constant time, so attackers can't guess the
-    # signature character by character from response timing
     return hmac.compare_digest(expected.encode(), received.encode())
 
 
 def ingest_portal_event(db: Session, org: Org, event: PortalEvent) -> Lead:
-    """Turn a portal event into a lead + message. Week 4 moves this into a background job."""
     email = event.email.strip().lower() if event.email else None
 
     lead = None
+    created = False
     if email:
         lead = db.scalar(select(Lead).where(Lead.org_id == org.id, Lead.email == email))
     if lead is None:
+        created = True
         profile = {"treatment_interest": event.treatment, "city": event.city}
         lead = Lead(
             org_id=org.id,
@@ -76,6 +75,9 @@ def ingest_portal_event(db: Session, org: Org, event: PortalEvent) -> Lead:
             external_id=event.event_id,
         )
     )
+    enqueue_extraction(db, lead.id)  # the worker turns the new message into memories
+    if created:
+        notify(db, f"New enquiry from {event.name or event.email or 'unknown'}: {event.message[:120]}")
     return lead
 
 
@@ -87,7 +89,6 @@ def portal_webhook(
     db: Session = Depends(get_db),
     org: Org = Depends(get_org),
 ):
-    # 1. Authenticate: reject before touching the database
     if not x_timestamp or not x_signature:
         raise HTTPException(401, "Missing signature headers")
     try:
@@ -99,14 +100,11 @@ def portal_webhook(
     if not signature_is_valid(body, x_timestamp, x_signature):
         raise HTTPException(401, "Invalid signature")
 
-    # 2. Validate the payload shape
     try:
         event = PortalEvent.model_validate_json(body)
     except ValidationError:
         raise HTTPException(422, "Invalid payload")
 
-    # 3. Store the raw event first. The unique (provider, external_id)
-    #    constraint makes a repeated event fail here: that's idempotency.
     record = WebhookEvent(
         provider="portal",
         external_id=event.event_id,
@@ -118,10 +116,9 @@ def portal_webhook(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return {"status": "duplicate"}  # 200, so the sender stops retrying
+        return {"status": "duplicate"}
     record_id = record.id
 
-    # 4. Process. Lead, message and event status commit together or not at all.
     try:
         lead = ingest_portal_event(db, org, event)
         lead_id = lead.id
@@ -137,5 +134,4 @@ def portal_webhook(
         record.attempts += 1
         record.last_error = str(exc)[:500]
         db.commit()
-        # the event is saved, so we can retry it later (Week 4)
         return {"status": "failed"}

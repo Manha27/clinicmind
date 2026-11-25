@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_lead_or_404
+from app.jobs.queue import enqueue_extraction
 from app.models import Lead, Message, Thread
 from app.schemas import MessageCreate, MessageOut
 
@@ -35,6 +36,7 @@ def add_message(
         sent_at=data.sent_at or datetime.now(timezone.utc),
     )
     db.add(message)
+    enqueue_extraction(db, lead.id)  # the worker turns the new message into memories
     db.commit()
     db.refresh(message)
     return message

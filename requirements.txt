@@ -8,3 +8,5 @@ pytest
 httpx
 google-genai
 pgvector
+cryptography
+mcp>=2,<3

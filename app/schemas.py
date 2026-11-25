@@ -105,3 +105,80 @@ class AskResponse(BaseModel):
     answer: str
     context: str
     manifest: dict
+
+
+class JobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    payload: dict
+    status: str
+    attempts: int
+    max_attempts: int
+    run_at: datetime
+    last_error: str | None
+    result: dict | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    due_at: datetime | None = None
+
+
+class TaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    lead_id: uuid.UUID
+    title: str
+    due_at: datetime | None
+    status: str
+    created_by: str
+    created_at: datetime
+
+
+class MemoryEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    memory_id: uuid.UUID | None
+    op: str
+    reason: str | None
+    before: dict | None
+    after: dict | None
+    created_at: datetime
+
+
+class IntegrationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    provider: str
+    account_email: str
+    status: str
+    scopes: list | None
+    expires_at: datetime | None
+    created_at: datetime
+
+
+class AgentTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class AgentRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    lead_id: uuid.UUID | None = None
+    allow_actions: bool = Field(
+        False, description="You (the human) approve actions outside ClinicMind, like Slack or Google Docs"
+    )
+    history: list[AgentTurn] = Field(default_factory=list, max_length=20)
+
+
+class AgentResponse(BaseModel):
+    answer: str
+    steps: list[dict]
+    stopped: str

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClinicMind</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--fg:#1d2330;--muted:#667085;--line:#e3e6ec;--accent:#2a7de1;--ok:#1f8f5f;--warn:#c27a10;--bad:#c4372f}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--panel:#181c25;--fg:#e7eaf1;--muted:#97a0b3;--line:#2a3040;--accent:#5a9cf0;--ok:#43c08a;--warn:#e0a13a;--bad:#ef6a62}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2;flex-wrap:wrap}
+header h1{font-size:17px;margin:0}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+button,select,input,textarea{font:inherit;color:var(--fg)}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+input,textarea,select{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%}
+main{padding:18px 20px;max-width:1150px;margin:0 auto}
+.cols{display:grid;grid-template-columns:270px 1fr;gap:16px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.lead{padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid transparent}
+.lead:hover{background:var(--bg)} .lead.sel{border-color:var(--accent);background:var(--bg)}
+.lead b{display:block}.muted{color:var(--muted)}.small{font-size:12px}
+.tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.chip{display:inline-block;border-radius:99px;padding:1px 9px;font-size:12px;border:1px solid var(--line)}
+.chip.fact{color:var(--accent)}.chip.preference{color:var(--ok)}.chip.commitment{color:var(--warn)}.chip.episode{color:var(--muted)}
+.chip.done,.chip.ADD{color:var(--ok)}.chip.dead,.chip.SUPERSEDE{color:var(--bad)}.chip.queued,.chip.NOOP{color:var(--muted)}.chip.running{color:var(--warn)}
+.mem{padding:9px 0;border-bottom:1px solid var(--line)}.mem:last-child{border:0}
+.mem.old .txt{text-decoration:line-through;color:var(--muted)}
+.msg{padding:7px 10px;border-radius:8px;margin:5px 0;max-width:85%}
+.msg.in{background:var(--bg)}.msg.out{background:color-mix(in srgb,var(--accent) 16%,var(--panel));margin-left:auto}
+.msg.internal{border:1px dashed var(--line)}
+pre{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;overflow:auto}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0}.row>input{flex:1}
+.bar{height:20px;border-radius:4px;background:var(--accent);min-width:2px}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>ClinicMind</h1>
+  <nav id="nav"></nav>
+  <span id="health" class="muted small"></span>
+  <a class="small" href="/docs" style="margin-left:auto;color:var(--accent)">API docs</a>
+</header>
+<main id="view"></main>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+
+// h(tag, props, ...children): builds DOM safely. Text goes through createTextNode, never innerHTML.
+function h(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return e;
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...options });
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* empty body */ }
+  if (!res.ok) throw new Error((body && body.detail && (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail))) || res.statusText);
+  return body;
+}
+
+const state = { view: "leads", leads: [], selected: null, tab: "memory", filter: "", showOld: false };
+const when = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "");
+const chip = (text, cls) => h("span", { class: `chip ${cls || text}` }, text);
+const errorBox = (e) => h("p", { class: "err" }, `Error: ${e.message}`);
+
+function renderNav() {
+  const nav = $("#nav");
+  nav.replaceChildren(...[["leads", "Leads"], ["assistant", "Assistant"], ["jobs", "Jobs"], ["evals", "Evals"]].map(([id, label]) =>
+    h("button", { class: state.view === id ? "on" : "", onclick: () => { state.view = id; render(); } }, label)));
+}
+
+async function render() {
+  renderNav();
+  const view = $("#view");
+  view.replaceChildren(h("p", { class: "muted" }, "Loading..."));
+  try {
+    const fn = { leads: viewLeads, assistant: viewAssistant, jobs: viewJobs, evals: viewEvals }[state.view];
+    view.replaceChildren(await fn());
+  } catch (e) { view.replaceChildren(errorBox(e)); }
+}
+
+// ---------- Leads ----------
+async function viewLeads() {
+  state.leads = await api("/leads?limit=200");
+  const list = h("div", { id: "leadlist" });
+  const detail = h("div", { id: "detail" }, h("p", { class: "muted" }, "Pick a lead on the left."));
+  const draw = () => {
+    const f = state.filter.toLowerCase();
+    const shown = state.leads.filter((l) => !f || [l.full_name, l.email, l.phone].some((v) => (v || "").toLowerCase().includes(f)));
+    list.replaceChildren(...shown.map((l) => h("div", { class: "lead" + (state.selected === l.id ? " sel" : ""), onclick: () => { state.selected = l.id; draw(); drawDetail(detail); } },
+      h("b", {}, l.full_name || l.email || "Unnamed"), h("span", { class: "muted small" }, `${l.status} · ${l.source || ""}`))));
+    if (!shown.length) list.replaceChildren(h("p", { class: "muted" }, "No leads."));
+  };
+  const search = h("input", { placeholder: "Search leads...", value: state.filter, oninput: (e) => { state.filter = e.target.value; draw(); } });
+  draw();
+  if (state.selected) drawDetail(detail);
+  return h("div", { class: "cols" }, h("div", { class: "panel" }, search, h("div", { style: "margin-top:8px" }, list)), h("div", { class: "panel" }, detail));
+}
+
+async function drawDetail(box) {
+  const lead = state.leads.find((l) => l.id === state.selected);
+  if (!lead) return;
+  const body = h("div", {}, h("p", { class: "muted" }, "Loading..."));
+  const tabs = ["memory", "audit", "messages", "ask", "tasks"].map((t) =>
+    h("button", { class: state.tab === t ? "on" : "", onclick: () => { state.tab = t; drawDetail(box); } }, { memory: "Memory", audit: "Why we remember", messages: "Messages", ask: "Ask", tasks: "Tasks" }[t]));
+  box.replaceChildren(
+    h("h2", { style: "margin:0" }, lead.full_name || lead.email || "Unnamed"),
+    h("p", { class: "muted small" }, [lead.email, lead.phone, lead.status].filter(Boolean).join(" · "), " ", Object.entries(lead.profile || {}).map(([k, v]) => `${k}: ${v}`).join(" · ")),
+    h("div", { class: "tabs" }, tabs), body);
+  try { body.replaceChildren(await tabViews[state.tab](lead)); } catch (e) { body.replaceChildren(errorBox(e)); }
+}
+
+const tabViews = {
+  async memory(lead) {
+    const all = await api(`/leads/${lead.id}/memories?status=all`);
+    const shown = all.filter((m) => state.showOld || m.status === "active");
+    const toggle = h("label", { class: "small muted" }, h("input", { type: "checkbox", style: "width:auto", checked: state.showOld, onchange: (e) => { state.showOld = e.target.checked; drawDetail($("#detail")); } }), " show superseded history");
+    const rows = shown.map((m) => h("div", { class: "mem" + (m.status !== "active" ? " old" : "") },
+      chip(m.kind), " ", m.status !== "active" ? chip("superseded", "dead") : null, h("div", { class: "txt" }, m.content),
+      h("div", { class: "muted small" }, `importance ${m.importance} · confidence ${m.confidence} · ${when(m.created_at)}`)));
+    const extract = h("button", { onclick: async (e) => { e.target.disabled = true; e.target.textContent = "Queued..."; try { await api(`/leads/${lead.id}/extract/async`, { method: "POST" }); e.target.textContent = "Queued: the worker will extract"; } catch (x) { e.target.textContent = x.message; } } }, "Extract memories (background)");
+    return h("div", {}, h("div", { class: "row" }, extract, toggle), rows.length ? rows : h("p", { class: "muted" }, "No memories yet. Add messages and run extraction."));
+  },
+  async audit(lead) {
+    const events = await api(`/leads/${lead.id}/memory-events`);
+    if (!events.length) return h("p", { class: "muted" }, "No decisions recorded yet.");
+    return h("table", {}, h("thead", {}, h("tr", {}, ["When", "Decision", "Why", "Memory"].map((t) => h("th", {}, t)))),
+      h("tbody", {}, events.map((e) => h("tr", {}, h("td", { class: "small" }, when(e.created_at)), h("td", {}, chip(e.op)), h("td", {}, e.reason || ""),
+        h("td", {}, e.before ? h("span", { class: "muted" }, `was: ${e.before.content} → `) : null, e.after ? e.after.content : "")))));
+  },
+  async messages(lead) {
+    const msgs = await api(`/leads/${lead.id}/messages`);
+    const box = h("input", { placeholder: "Add a staff note..." });
+    const add = h("button", { onclick: async () => { if (!box.value.trim()) return; await api(`/leads/${lead.id}/messages`, { method: "POST", body: JSON.stringify({ channel: "note", direction: "internal", body: box.value }) }); drawDetail($("#detail")); } }, "Add note");
+    return h("div", {}, msgs.map((m) => h("div", { class: `msg ${m.direction}` }, h("div", {}, m.body), h("div", { class: "muted small" }, `${m.direction} · ${when(m.sent_at)}`))), h("div", { class: "row" }, box, add));
+  },
+  async ask(lead) {
+    const out = h("div", {});
+    const q = h("input", { placeholder: "e.g. How much can she spend, and who decides?" });
+    const go = async () => {
+      if (!q.value.trim()) return;
+      out.replaceChildren(h("p", { class: "muted" }, "Thinking..."));
+      try {
+        const r = await api(`/leads/${lead.id}/ask`, { method: "POST", body: JSON.stringify({ question: q.value }) });
+        out.replaceChildren(h("div", { class: "panel" }, r.answer), h("details", {}, h("summary", { class: "muted small" }, `What the AI was shown (${r.manifest.tokens.total} tokens)`), h("pre", {}, r.context), h("pre", {}, JSON.stringify(r.manifest, null, 2))));
+      } catch (e) { out.replaceChildren(errorBox(e)); }
+    };
+    q.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    return h("div", {}, h("div", { class: "row" }, q, h("button", { onclick: go }, "Ask")), out);
+  },
+  async tasks(lead) {
+    const tasks = await api(`/leads/${lead.id}/tasks`);
+    const box = h("input", { placeholder: "New follow-up task..." });
+    const add = h("button", { onclick: async () => { if (!box.value.trim()) return; await api(`/leads/${lead.id}/tasks`, { method: "POST", body: JSON.stringify({ title: box.value }) }); drawDetail($("#detail")); } }, "Add");
+    return h("div", {}, tasks.map((t) => h("div", { class: "mem" }, chip(t.status === "open" ? "open" : "done", t.status === "open" ? "queued" : "done"), " ", t.title, " ", h("span", { class: "muted small" }, t.created_by === "agent" ? "· created by assistant" : ""))), h("div", { class: "row" }, box, add));
+  },
+};
+
+// ---------- Assistant ----------
+const chat = [];
+async function viewAssistant() {
+  const log = h("div", {});
+  const leads = await api("/leads?limit=200");
+  const lead = h("select", {}, h("option", { value: "" }, "(no lead selected)"), leads.map((l) => h("option", { value: l.id }, l.full_name || l.email)));
+  const allow = h("input", { type: "checkbox", style: "width:auto" });
+  const q = h("input", { placeholder: "Ask about leads, tasks, or tell it to do something..." });
+  const paint = () => log.replaceChildren(...chat.map((t) => h("div", { class: "msg " + (t.role === "user" ? "out" : "in") }, h("div", {}, t.text),
+    (t.steps || []).map((s) => h("details", {}, h("summary", { class: "muted small" }, `tool: ${s.tool}`), h("pre", {}, JSON.stringify({ args: s.args, result: s.result }, null, 2)))))));
+  const send = async () => {
+    const text = q.value.trim(); if (!text) return; q.value = "";
+    const history = chat.map((t) => ({ role: t.role, text: t.text }));
+    chat.push({ role: "user", text }); paint();
+    try {
+      const r = await api("/agent/chat", { method: "POST", body: JSON.stringify({ message: text, lead_id: lead.value || null, allow_actions: allow.checked, history }) });
+      chat.push({ role: "assistant", text: r.answer, steps: r.steps });
+    } catch (e) { chat.push({ role: "assistant", text: `Error: ${e.message}` }); }
+    paint();
+  };
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  paint();
+  return h("div", { class: "panel" },
+    h("div", { class: "row" }, lead, h("label", { class: "small muted", style: "white-space:nowrap" }, allow, " allow actions outside ClinicMind (Slack, Google Docs)")),
+    log, h("div", { class: "row" }, q, h("button", { onclick: send }, "Send")));
+}
+
+// ---------- Jobs ----------
+async function viewJobs() {
+  const jobs = await api("/jobs?limit=100");
+  if (!jobs.length) return h("div", { class: "panel" }, h("p", { class: "muted" }, "No jobs yet. Run the worker: python -m app.worker"));
+  return h("div", { class: "panel" }, h("table", {}, h("thead", {}, h("tr", {}, ["Job", "Status", "Attempts", "Last error", ""].map((t) => h("th", {}, t)))),
+    h("tbody", {}, jobs.map((j) => h("tr", {}, h("td", {}, j.kind, h("div", { class: "muted small" }, when(j.created_at))), h("td", {}, chip(j.status)), h("td", {}, `${j.attempts}/${j.max_attempts}`),
+      h("td", { class: "small" }, j.last_error || ""),
+      h("td", {}, j.status === "dead" ? h("button", { onclick: async () => { await api(`/jobs/${j.id}/retry`, { method: "POST" }); render(); } }, "Retry") : null))))));
+}
+
+// ---------- Evals ----------
+async function viewEvals() {
+  const runs = await api("/evals/summary");
+  if (!runs.length) return h("div", { class: "panel" }, h("p", { class: "muted" }, "No eval runs yet. Run: python -m evals.run"));
+  const metric = (title, key, unit, scale) => {
+    const values = runs.map((r) => r.summary[key]);
+    const top = scale || Math.max(...values.filter((v) => v != null), 1);
+    return h("div", { class: "panel", style: "margin-bottom:12px" }, h("b", {}, title), runs.map((r) => {
+      const v = r.summary[key];
+      return h("div", { class: "row" }, h("span", { style: "width:110px" }, r.strategy), h("div", { class: "bar", style: `width:${v == null ? 0 : Math.max(1, (v / top) * 100)}%;flex:none;max-width:70%` }), h("span", { class: "muted small" }, v == null ? "-" : `${v}${unit}`));
+    }));
+  };
+  const pct = (key) => (r) => Math.round(r.summary[key] * 1000) / 10;
+  runs.forEach((r) => { r.summary._acc = pct("accuracy")(r); r.summary._stale = pct("stale_rate")(r); });
+  return h("div", {}, metric("Accuracy", "_acc", "%", 100), metric("Stale answers", "_stale", "%", 100), metric("Average prompt tokens", "avg_prompt_tokens", ""), metric("p95 latency", "p95_latency_ms", " ms"));
+}
+
+(async function init() {
+  try { const r = await api("/health"); $("#health").textContent = `API: ${r.status}, database: ${r.db}`; }
+  catch (e) { $("#health").textContent = "API not reachable"; }
+  render();
+})();
+</script>
+</body>
+</html>

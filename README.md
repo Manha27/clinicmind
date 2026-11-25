@@ -1,42 +1,26 @@
 # ClinicMind
 
-A CRM for dental and skin clinic enquiries, with an **AI memory layer**, **third-party integrations** and **MCP tools** for agents.
+A CRM for dental and skin clinic enquiries with an **AI memory layer**, **third-party integrations** and **MCP tools** for agents.
+All data is synthetic; no real patient information is used.
 
-> **Status:** work in progress. Week 1 (backend foundation and secure webhooks) is complete. Everything marked "Planned" is not built yet.
-> All data in this project is synthetic. No real patient information is used.
+Clinic front desks lose context across WhatsApp, email and calls ("afraid of needles", "budget 60k, now 80k", "only free in the evening").
+ClinicMind keeps that context, keeps it correct when it changes, and gives it to AI agents.
 
-## Why this exists
+## What it does
 
-Clinic front desks lose context across WhatsApp, email and calls ("afraid of needles", "budget ₹60k", "only free in the evening"). ClinicMind keeps that context in one place and will remember it for AI agents.
+| Area | What is built |
+|---|---|
+| **Memory** | LLM fact extraction (validated JSON) -> embeddings in pgvector -> reconcile (ADD / SUPERSEDE / NOOP with history and audit trail) -> hybrid retrieval (vector + keyword + recency + importance) -> token-budgeted context builder |
+| **Background jobs** | Postgres job queue (`SKIP LOCKED`), worker with retries, backoff, dead-letter and stale-job recovery |
+| **Integrations** | Signed webhooks (HMAC, replay window, idempotency), WhatsApp Cloud API webhook, Gmail via OAuth2 + PKCE with incremental sync, Slack alerts, Google Docs |
+| **Agent tools** | One tool layer used by a built-in function-calling agent and by an **MCP server**; external actions need human approval |
+| **Evals** | 8 synthetic patients, 48 questions: full history vs summary vs memory, scored on accuracy, stale answers, tokens, latency, cost |
+| **Reliability** | LLM retries, timeouts, fallback model, per-call token/latency/cost log, clear 503s |
+| **UI** | Memory viewer (including superseded history and *why* each memory exists), ask box that shows what the AI was shown, jobs, assistant, eval charts |
 
-## What works today
+See [docs/architecture.md](docs/architecture.md) for the diagram and design decisions, and [docs/SETUP.md](docs/SETUP.md) for Slack, Gmail, WhatsApp and MCP setup.
 
-- Leads CRUD with per-org scoping and duplicate-email protection
-- Conversation threads and messages per lead, with channel and direction
-- **Signed webhook ingestion** from a mock clinic-directory portal:
-  - HMAC-SHA256 signature on the exact raw request body
-  - Timestamp check against replay attacks (5-minute window)
-  - Idempotency via a unique `(provider, event_id)` constraint
-  - Raw events stored with a status, so failed events are never lost
-- Alembic migrations and an automated test suite (pytest)
-
-## Architecture
-
-```mermaid
-flowchart LR
-    Portal[Mock portal] -- "signed webhook" --> API[FastAPI]
-    UI[Client / Swagger UI] -- REST --> API
-    API --> DB[(Postgres + pgvector)]
-    API -. planned .-> Jobs[Background jobs]
-    Jobs -. planned .-> Mem[Memory layer]
-    Mem -. planned .-> MCP[MCP server]
-```
-
-## Tech stack
-
-Python 3.12, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 16 with pgvector, Docker Compose, pytest.
-
-## Run it locally (Windows PowerShell)
+## Quick start (Windows PowerShell)
 
 ```powershell
 git clone https://github.com/Manha27/clinicmind.git
@@ -44,34 +28,38 @@ cd clinicmind
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env        # then put a random value for WEBHOOK_SECRET
+copy .env.example .env          # fill in GEMINI_API_KEY and WEBHOOK_SECRET
 docker compose up -d
 alembic upgrade head
 python -m app.seed
-uvicorn app.main:app --reload
+python -m scripts.seed_demo     # demo patients
+uvicorn app.main:app            # terminal 1  ->  http://127.0.0.1:8000/ui/
+python -m app.worker            # terminal 2  ->  turns messages into memories
 ```
 
-Open http://127.0.0.1:8000/docs for the interactive API.
-
-Send a signed test webhook:
-
-```powershell
-python -m scripts.send_webhook
-```
-
-## Run the tests
+## Tests
 
 ```powershell
 docker exec -it clinicmind-db psql -U clinicmind -d clinicmind -c "CREATE DATABASE clinicmind_test;"
-python -m pytest -v
+python -m pytest -q
 ```
+The suite never calls a real LLM or a real third-party API: Gmail, Google OAuth, Docs, Slack and the model run against fakes.
 
-## Roadmap
+## Evals
 
-- [x] Week 1: schema, CRUD, signed webhooks, tests
-- [ ] Week 2: LLM wrapper with cost/latency logging, structured fact extraction, embeddings
-- [ ] Week 3: memory reconcile (add/update/supersede), hybrid retrieval, context builder
-- [ ] Week 4: Gmail OAuth sync, Slack alerts, background jobs with retries
-- [ ] Week 5: agent tool loop and MCP server
-- [ ] Week 6: evals (full history vs summary vs memory retrieval), forgetting and decay
-- [ ] Week 7: memory viewer UI, demo video
+```powershell
+python -m evals.run --leads 2 --strategies memory --sleep 2
+```
+Open `evals/output/report.html` (or the Evals tab). Results from a real run belong here once you have them.
+
+## Layout
+
+```
+app/            API, memory layer, jobs, integrations, tools, agent, UI (static)
+mcp_server/     MCP server (stdio)
+evals/          dataset, scoring, strategies, runner, report
+scripts/        demo seeding, signed webhook senders, benchmarks
+migrations/     Alembic
+tests/          pytest
+docs/           architecture, setup
+```

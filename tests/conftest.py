@@ -32,8 +32,10 @@ def clean_db():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE memory_events, memories, webhook_events, messages, threads, leads, users, orgs "
-                "RESTART IDENTITY CASCADE"          )
+                "TRUNCATE eval_results, eval_runs, tasks, oauth_states, sync_cursors, integration_accounts, "
+                "jobs, memory_events, memories, webhook_events, messages, threads, leads, users, orgs "
+                "RESTART IDENTITY CASCADE"
+            )
         )
     with TestingSession() as session:
         session.add(Org(name="Test Clinic"))
@@ -59,3 +61,8 @@ def client():
 def db():
     with TestingSession() as session:
         yield session
+
+
+@pytest.fixture
+def session_factory():
+    return TestingSession
